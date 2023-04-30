@@ -1,0 +1,6 @@
+Address,Date,Inspector,Client Name,Client Address,Client Phone,Mold Issues?,Framing Issues?,Electrical Issues?,Plumbing Issues?,Roof Issues?,Foundation Issues?,HVAC Issues?,Mold,Framing,Electrical,Plumbing,Roof,Foundation,HVAC
+""
+42 Mill Road,1/4/23,Robin Atwood,Amber Roslyn,16 Cherry St,555-284-7782,No,No,No,No,No,No,No,,,,,,,
+11 Hay Ln,12/18/22,Mike Hamilton,Carlos Amana,1087 Express Drive N,555-294-3398,No,Yes,No,No,Yes,No,No,,Improper ledger fasteners on deck,,,Deteriorated flashing around chimney causing roof leak,,
+14 Willow Ct,2/11/23,Sal Fiore,Amanda Fuller,7 Hamon Ln,555-308-3726,Yes,No,Yes,Yes,No,Yes,No,Primary bathroom has black mold behind the sink. Requires complete remodel.,,"Breakers #6 and #11 are oversized, must be reduced to 15a, or wires upgraded to 12g.",Primary bathroom leak hidden behind wall causing mold & rot.,,Minor crack on west-side wall.,
+18 Jerry Drive,4/1/23,Mindy Smith,Jeremy Till,1 Pond Path,555-829-1918,No,No,Yes,No,No,No,No,,,"Wiring is old and ungrounded, should rewire entire home.",,,,
