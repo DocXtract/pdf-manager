@@ -1,3 +1,4 @@
+import copy
 from pdf_simulator import PdfGenerator, PdfReader
 from pdfStructure import *
 from datetime import datetime
@@ -314,21 +315,16 @@ class Organization:
     # We have recieved a member's response! Append it and refresh our view list.
     # We must store this updated list to save the responses on the server
     def receiveFormResponse(self, response):
+        new_response = copy.deepcopy(response)
 
-        # STORE THE s3 BUCKET LINK HERE
-        response.pdf = self.saveResponseAsPdf(response)
+        # RETURN AND STORE THE s3 BUCKET LINK HERE
+        new_response.pdf = self.saveResponseAsPdf(new_response)
         
-        
-
-        self.responses.append(response) # Cool, but we want to rather store this in the form's response list, not orgs
-        id = response.formID
+        id = new_response.formID
         form = self.forms[id]
-        form.responses.append(response)
-        # try:
-        #     print(form.responses[0].fields[0].value)
-        #     print(form.responses[1].fields[0].value)
-        # except:
-        #     pass
+        
+        self.responses.append(new_response) # Cool, but we want to rather store this in the form's response list, not orgs
+        form.responses.append(new_response)
         # UPDATE THE s3 EXCEL SHEET AND STORE IT
         excelPath = PdfGenerator.generateExcel(form)
         form.excel = Organization.uploadS3(excelPath, form.excel)
