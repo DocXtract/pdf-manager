@@ -12,6 +12,31 @@ import shutil
 
 class PdfGenerator():
 
+    # creates json object from field array
+    def fields_to_json(fields):
+        data = {"fields": []}
+
+        for field in fields:
+            field_entry = {
+                "name": field.name, 
+                "index": field.index, 
+                "type": field.type,
+                "value": field.value,
+                "rect": field.rect,
+                "pageHeight": field.pageHeight,
+                "pageWidth": field.pageWidth,
+                "pageIndex": field.pageIndex,
+
+                "singleSelectionOnly": field.singleChoice,
+                "groupName": field.choiceGroup,
+                "choiceName": field.choiceValue,
+
+            }
+
+            data["fields"].append(field_entry)
+        return data
+
+
     # creates a 2d array ('responses') from expected json: 
     # {user: {fieldIndex: {name: ... , type: ... ...}, fieldIndex: {name: ... , type: ... ...}, ...}, user: {fieldIndex: {name: ... , type: ... ...}, fieldIndex: {name: ... , type: ... ...}, ...}, ... }
     def json_to_responses(jsonString):
@@ -19,24 +44,22 @@ class PdfGenerator():
         jsonObject = json.loads(jsonString)
         responses = []
 
-        # For each key, we have a response (fields) to make 
-        # because we will have user: json, user: json...
-        for key in jsonObject: # each key is another json object of fields; eg: {name: ..., type: ... ...}
-            response = PdfGenerator.json_to_fields(jsonObject[key])
+        for response in jsonObject['responses']:
             responses.append(response)
 
         return responses
 
     # creates an array of fields 
-    # from expected json: {fieldIndex: {name: ... , type: ... ...}, fieldIndex: {name: ... , type: ... ...}, ...}
+    # ex: {"fields": [{"index": 0, "name": "Item 1", "type": "Type 1", "generated": true}, {"index": 1, "name": "Item 2", "type": "Type 2", "generated": true}, {"index": 2, "name": "Item 3", "type": "Type 3", "generated": true}, {"index": 3, "name": "Item 4", "type": "Type 4", "generated": true}]}
+
     def json_to_fields(jsonString):
         # get each field
         jsonObject = json.loads(jsonString)
-
+        
         fields = []
-        for key in jsonObject:
+        for field in jsonObject['fields']:
             # For each field
-            fields.append(PdfGenerator.json_to_field(jsonObject[key]))
+            fields.append(PdfGenerator.json_to_field(json.dumps(field)))
 
         return fields
 
@@ -64,12 +87,11 @@ class PdfGenerator():
     
 
     # Create a pdf from desktop site. Given fields with name, type, default value.
-    def create_pdf(json_fields, title):
-        path = title+".pdf"
+    def create_pdf(json_fields, title, dest):
         spacing = 50
         fields = PdfGenerator.json_to_fields(json_fields)
 
-        c = canvas.Canvas(path)
+        c = canvas.Canvas(dest)
         c.setFont("Courier", 20)
         c.drawCentredString(300, 800, title)
 
@@ -136,9 +158,9 @@ class PdfGenerator():
         c.save()
 
         # Handles populating rect and page height properties mostly
-        newPdf = PdfGenerator.fields_to_pdf(fields)
+        # newPdf = PdfGenerator.fields_to_pdf(fields, dest)
 
-        return newPdf
+        # return newPdf
         
 
 
@@ -245,11 +267,12 @@ class PdfGenerator():
 
 
     # Generate excel from responses - each response is an array of fields
-    def generate_excel(json_responses):
+    # now responses live in the database. We parse them to an object in the api and then send the object here
+    def generate_excel(responses, path):
 
-        responses = PdfGenerator.json_to_responses(json_responses)
+        #responses = PdfGenerator.json_to_responses(json_responses)
 
-        workbook = xlsxwriter.Workbook("excel.xlsx")
+        workbook = xlsxwriter.Workbook(path)
         worksheet = workbook.add_worksheet("Responses")
         visitedGroups = [] # Used to keep track of radio groups so we only display once
 
@@ -282,7 +305,7 @@ class PdfGenerator():
             col = 0
             visitedGroups = []
             
-            for field in response.fields:
+            for field in response:
                 if (field.type == Consts.checkBoxDisplay):
 
                     if (field.value in Consts.checkBoxYesState):
@@ -300,7 +323,7 @@ class PdfGenerator():
                     if group not in visitedGroups:
                         visitedGroups.append(group) # Avoid doing this group twice
                         values = []
-                        for f in response.fields:
+                        for f in response:
                             # Iterate again over all fields to find all responses of this group
                             if (f.type == Consts.mcDisplay):
                                 
@@ -341,11 +364,8 @@ class PdfGenerator():
 
     # Generate pdf from these fields (once submitted from mobile, show as document on web)
     # Takes field objects and path to the blank form
-    def fields_to_pdf(json_fields, blank): 
+    def fields_to_pdf(fields, blank, dest): 
 
-        fields = PdfGenerator.json_to_responses(json_fields)
-
-        output_path = "filled_document.pdf"
         reader = PdfReader(blank)
 
         writer = PdfWriter()
@@ -419,11 +439,11 @@ class PdfGenerator():
                 k += 1 # Update total respect field index (index holds across pages)
         
         # Create output file
-        with open(output_path, "wb") as output_stream:
+        with open(dest, "wb") as output_stream:
             writer.write(output_stream)
         output_stream.close()
 
-        return output_path
+        return dest
         #NOTE: Attempt to flatten did not fix invisible text. Try converting to image perhaps
         # fillpdfs.flatten_pdf(newFile, 'flat.pdf', True)
 
@@ -567,8 +587,8 @@ class PdfGenerator():
     # Creates borders around the text to tell user where to write responses
     # Also creates a border on the outside of the document so we know where to crop after the scan
     # Must be called from the print button to print this form (path returned)
-    def printForm(path):
-        newPath = path.replace(".pdf", "-print.pdf")
+    def print_form(path):
+        newPath = path.replace("original", "print")
         fields = PdfGenerator.pdf_to_fields(path)
 
         shutil.copy(path, newPath) # Create a copy to put the boxes onto
@@ -576,7 +596,7 @@ class PdfGenerator():
         existing_pdf = PdfReader(open(newPath, "rb")) # Store the existing pdf, the copy which we will overlay the boxes to
         output = PdfWriter() # designate a file for the final output
 
-        stage_path = 'rectangles'
+        stage_path = 'staging/rectangles'
 
         # make sure the staging directory exists
         if not os.path.exists(stage_path):
