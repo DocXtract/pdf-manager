@@ -20,7 +20,7 @@ class Api:
     def now():
         current_datetime = datetime.now()
         formatted_string = str(current_datetime).replace('-', '').replace(' ', '').replace(':', '')
-        return formatted_string.split('.')[0][:-2] # ignores seconds
+        return formatted_string.split('.')[0]
 
 
 
@@ -37,6 +37,63 @@ class Api:
     db_requests = db['requests']
     db_responses = db['responses']
     db_users = db['users']
+
+    # Affiliate an anonymous response with a user from the organization
+    @app.route('/affiliateResponse/<response>/<user>', methods = ['POST'])
+    def affiliateResponse(response, user):
+        # Validate the input
+        try:
+            ObjectId(response)
+            ObjectId(user)
+        except:
+            return make_response('The provided user and or response ids were of an invalid format! ', 400)
+        
+        r = Api.db_responses.find_one({'_id': ObjectId(response)})
+        u = Api.db_users.find_one({'_id': ObjectId(user)})
+
+        if r and u:
+            Api.db_responses.find_one_and_update({'_id': ObjectId(response)}, {'$set': {'user': user}})
+            return 'The user was successfully affiliated to that response!'
+        return make_response('The provided user and or response were of the proper format, but not found! ', 400)
+
+    
+    # Upload existing response for a user. Supply the document, form id and user id
+    @app.route('/submitOnBehalf', methods = ['POST'])
+    def submitOnBehalf():
+        user = request.form.get('user')
+        user = user if user else "unaffiliated" #  user is unaffiliated with org. How to handle? TODO
+
+        form = request.form.get('form')
+        pdf = request.files.get('pdf') # Should we allow upload of images, too? Future consideration
+
+        if not (user and form and pdf):
+            return make_response('ERROR: Must supply a pdf file as well as formdata for user and form!')
+
+        # store the file to the response path
+        response_folder = f'forms/{form}/responses/{user}'
+        
+        # make sure there is a folder for this user
+        if not os.path.isdir(response_folder):
+            os.mkdir(response_folder)
+
+        # store the pdf in this user's folder for this form.
+        # the name of the pdf is the id of the response
+        response_id = ObjectId()
+        response_path = response_folder + f'/{response_id}.pdf'
+
+        pdf.save(response_path)
+        fields = PdfGenerator.pdf_to_fields(response_path)
+
+
+        # Create the new response object, stringifying the fields
+        Api.db_responses.insert_one({'_id': response_id, 'user': user, 'form': form, 'fields': json.dumps(PdfGenerator.fields_to_json(fields)), 'date': Api.now()}) # Do i need to add request?
+
+        # Associate this response with the form
+        Api.db_forms.find_one_and_update({'_id': ObjectId(form)}, {"$push": {'responses': response_id} })
+
+        return make_response('Submitted the form on behalf of the user! ', 200)
+
+
 
 
     # send a form to users
@@ -59,13 +116,15 @@ class Api:
 
         # for each id, add the form id to their user entry in the database
         for user in users:
-
+            
             # Only send the request if the user does not have an active request for this form
             if Api.db_requests.find_one({'user': user, 'form': target_form}):
                 continue
 
             # Add a new request object - can reference each response.
             form = Api.db_forms.find_one({'_id': ObjectId(target_form)})
+            if not form:
+                return make_response('Given form does not exist!', 404)
 
             req = Api.db_requests.insert_one({'user': user, 'form': target_form, 'submissions_remaining': form['num_submissions']})
             req_id = req.inserted_id
@@ -123,6 +182,11 @@ class Api:
     # delete a form by id
     @app.route('/deleteForm/<id>', methods = ['POST'])
     def deleteForm(id):
+        try:
+            ObjectId(id)
+        except:
+            return make_response('Invalid form ID', 400)
+        
         # maybe send an auth token too? api key as below?
         Api.db_forms.delete_one({'_id': ObjectId(id)})
         requests = Api.db_requests.find({'form': id})
@@ -244,7 +308,7 @@ class Api:
         if users_param:
             users = json.loads(users_param)['users']
         else:
-            users = []
+            users = ['unaffiliated'] # set default user to unaffiliated to include such responses
             user_items = Api.db_users.find()
 
             # Add the id of each user if none were specified
@@ -254,16 +318,18 @@ class Api:
 
         # Iterate over the user id strings
         for user in users:
-            # Find any matching requests
-            responses = Api.db_responses.find({'form': id, 'user': user})
+           
 
             # If this user had any responses, add them all to the json
-            if responses.length > 0:
+            if Api.db_responses.count_documents({'form': id, 'user': user}):
+
+                 # Find any matching requests
+                responses = Api.db_responses.find({'form': id, 'user': user})
         
                 # For each response, add it to this user's array a new json object describing the response.
                 user_responses = []
                 for res in responses:
-                    user_responses.append( {'response_id': str(res['_id']), 'response_date': res['date'], 'response_fields': res['fields']} )
+                    user_responses.append( {'response_id': str(res['_id']), 'response_date': res['date'][:10], 'response_fields': json.loads(res['fields'])} )
                 
                 # Add all of this user's responses to the main json response
                 all_responses.update({user: user_responses }) # Prepare this user's array
@@ -314,7 +380,7 @@ class Api:
 
         # If the request has 0 attempts remaining, fail and exit 
         if not req_obj:
-            return make_response('Not authorized to respond! Are you out of attempts?', 403)
+            return make_response('No requests exist for the given form. Are you out of attempts?', 403)
 
         # Fetch the form
         form_id = req_obj['form']
@@ -376,7 +442,7 @@ class Api:
             # Note response['fields'] from db must be stringified json!
             responses.append(PdfGenerator.json_to_fields(response['fields'])) # add the response (array of fields)
         
-        # Make the excel path and sheet
+        # Make the excel path and sheet - No longer storing or generating excel on backend :(
         excel_path = f'forms/{form_id}/excel.xlsx'
         PdfGenerator.generate_excel(responses, excel_path)
             
@@ -386,7 +452,10 @@ class Api:
     # This member will retrieve all its form requests
     @app.route('/getAllForms/<user_id>', methods = ['GET'])
     def getAllForms(user_id):
-        
+        try:
+            ObjectId(user_id)
+        except:
+            return make_response('Invalid user id. Should be 12 character long UID.', 400)
         dict = {  }
         user_obj = Api.db_users.find_one({'_id': ObjectId(user_id)})
         requests = user_obj['requests']
@@ -400,10 +469,11 @@ class Api:
            
            # Note we no longer send printable link because it's not in the cloud.
            # Need a seperate api request that will return the image
-            dict.update( {str(form['_id']): 
+            dict.update( {req: 
                           {
                            "name": form['title'],
-                           "submissions_remaining": form['num_submissions'],
+                           "form_id": str(form['_id']),
+                           "submissions_remaining": req_obj['submissions_remaining'],
                            "description": form['description'],
                            "due": form['due_date'],
                            }} )
@@ -422,12 +492,15 @@ class Api:
         path = f'forms/{id}/excel.xlsx'
         return send_file(path, as_attachment=True)
     
+    # Generate an excel sheet for the given json of fields (i.e. When filtering)
+
+    
     # View this form that belongs to this member
     # Used when clicking on a form for example.
     # Very similar to get all forms, but we now add on the fields and number of pages as well.
-    @app.route('/getForm/<id>/', methods = ['GET'])
+    @app.route('/getForm/<id>', methods = ['GET'])
     def getForm(id):
-
+        print(id)
         form = Api.db_forms.find_one({'_id': ObjectId(id)})
         if not form:
             return make_response('Specified form was not found!', 404)
@@ -436,7 +509,7 @@ class Api:
         response = {"data": 
                         {
                             "name": form['title'],
-                            "submissions_remaining": form['num_submissions'],
+                            "max_submissions": form['num_submissions'],
                             "description": form['description'],
                             "due": form['due_date'],
 
@@ -458,3 +531,61 @@ class Api:
 Api()
 
 
+
+
+# filter responses (canceled)
+
+# Filter a given form's responses given formid and filters json
+#     @app.route('/filterResponses/<id>', methods = ['POST'])
+#     def filterResponses(id):
+#         form = Api.db_forms.find_one({'_id': ObjectId(id)})
+#         filters = request.form.get('filters')
+#         filter_mode = request.form.get('filter_mode')
+#         sorting = request.form.get('sorting')
+#         responses = form['responses']
+
+#         # Gather an array of response jsons (fields)
+#         all_responses = []
+#         for r_oid in responses:
+#             response = Api.db_responses.find_one({'_id': r_oid})
+#             all_responses.append(json.loads(response['fields']))
+        
+#         # Gather responses that match the filter
+#         filtered_responses = []
+#         for response in all_responses:
+#             # Check each condition. Break on a fail. If we get to the end of an iteration of the outter loop, we pass the test
+#             for filter in filters:
+#                 filter_field = filter['field'] # the field index we are looking at
+#                 filter_compare = filter['compare_to'] # the field we are comparing to, if any
+#                 filter_value = filter['value'] # the value to compare to, not comparing to another field
+#                 filter_type = filter['type'] # the method of comparison, i.e < =
+
+#                 # Store the first value being compared
+#                 filter_compare_a = response[str(filter_field)]['value']
+
+#                 # Are we comparing to another field's value? If so, get the value
+#                 if filter_compare > -1:
+#                     filter_compare_b = response[str(filter_compare)]['value'] # The value we are comparing to
+#                 else: # We provided a hard coded value to compare to instead. Store it
+#                     filter_compare_b = filter_value
+
+#                 # If the given field is a date, format it properly for comparison
+#                 if response[str(filter_compare)]['value']
+
+# On date parsing
+
+# from dateutil import parser
+
+# def convert_to_yyyymmdd(date_string):
+#     # Parse the input date string
+#     parsed_date = parser.parse(date_string)
+
+#     # Format the parsed date as YYYYMMDD
+#     formatted_date = parsed_date.strftime("%Y%m%d")
+
+#     return formatted_date
+
+# # Example usage
+# input_date = "3/10/19"
+# output_date = convert_to_yyyymmdd(input_date)
+# print(output_date)
